@@ -5,6 +5,7 @@ const BetplaceSchema = new mongoose.Schema(
     userid: {
       type: mongoose.Schema.Types.ObjectId,
       required: true,
+      ref: "Betuser"
     },
     mid: {
       type: Number,

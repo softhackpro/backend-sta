@@ -270,4 +270,3 @@ export const betListHistory = async (req, res) => {
     });
   }
 };
-

@@ -1,8 +1,10 @@
 import Betuser from "../models/betUser.js";
 import Balance from "../models/balance.js";
-
+import BetPasswordHistory from "../models/betpasswordhistory.js";
+import BetLoginDetail from "../models/betlogindetail.js";
+import { getLocationInfo } from "../utils/locationUtils.js";
 // Home route
-const home = async (req, res) => {
+export const home = async (req, res) => {
   try {
     res.status(200).send("Welcome bro buddy ffg");
   } catch (error) {
@@ -11,7 +13,7 @@ const home = async (req, res) => {
 };
 
 // Register route
-const register = async (req, res) => {
+export const register = async (req, res) => {
   if (req.user.userType > req.body.userType) {
     return res
       .status(401)
@@ -68,30 +70,47 @@ const register = async (req, res) => {
 };
 
 // Login route
-const login = async (req, res) => {
+export const login = async (req, res) => {
   try {
     const { username, password } = req.body;
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress;
     const userExist = await Betuser.findOne({ username });
+
+    let locationInfo = await getLocationInfo(ip);
 
     if (!userExist) {
       return res.status(400).json({ message: "Invalid Login Details" });
     }
 
+    const endpoint = req.originalUrl;
+    if (endpoint.includes("admin-login") && userExist.userType > 5) {
+      return res.status(403).json({ status: false, message: "Access denied: not an admin user" });
+    }
+
     const user = await userExist.comparePassword(password);
 
     if (user) {
-      res.status(200).json({
+      await BetLoginDetail.create({
+        userid: user._id,
+        loginstatus: "Login Successful",
+        isp: locationInfo.isp,
+        city: locationInfo.city,
+      });
+
+      return res.status(200).json({
         msg: "Login successful",
         token: await userExist.generateToken(),
-        virgin: userExist.virgin.toString(),
+        virgin: userExist.virgin,
       });
     } else {
-      res.status(401).json({ message: "Invalid username or password" });
+      return res.status(401).json({ message: "Invalid username or password" });
     }
   } catch (error) {
-    res.status(500).json("Internal server error");
+    console.error(error); // Add this for debugging
+    return res.status(500).json("Internal server error");
   }
 };
+
 
 export const updatePassword = async (req, res) => {
   const { username, oldPassword, newPassword } = req.body;
@@ -126,6 +145,15 @@ export const updatePassword = async (req, res) => {
     // Update password - this will trigger the pre-save hook to hash the password
     user.password = newPassword;
     await user.save();
+
+    const remark = req.originalUrl.includes("admin-update")
+      ? "password changed by master"
+      : "password changed by self";
+
+    await BetPasswordHistory.create({
+      userid: user._id,
+      remark: remark,
+    });
 
     return res.status(200).json({
       success: true,
@@ -165,7 +193,8 @@ export const searchUser = async (req, res) => {
       .populate({
         path: "parentid",
         select: "username userType",
-      }).limit(limit);
+      })
+      .limit(limit);
 
     if (!users || users.length === 0) {
       return res.status(404).json({
@@ -189,7 +218,7 @@ export const searchUser = async (req, res) => {
   }
 };
 // Get user data
-const user = async (req, res) => {
+export const user = async (req, res) => {
   try {
     const userData = req.user;
     res.status(200).json({ userData });
@@ -198,4 +227,104 @@ const user = async (req, res) => {
   }
 };
 
-export { home, register, login, user };
+export const passwordhistory = async (req, res) => {
+  try {
+    const id = req.user._id;
+    
+    // Pagination parameters (default: page 1, limit 10)
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    // Get total count for pagination info
+    const total = await BetPasswordHistory.countDocuments({ userid: id });
+
+    const result = await BetPasswordHistory.find({ userid: id })
+      .sort({ createdAt: -1 })
+      .select("-__v")
+      .skip(skip)
+      .limit(limit);
+
+    if (!result || result.length === 0) {
+      return res.status(404).json({
+        status: false,
+        message: "No password history found for this user",
+      });
+    }
+
+    res.status(200).json({ 
+      status: true, 
+      data: result,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        itemsPerPage: limit,
+        hasNextPage: page * limit < total,
+        hasPreviousPage: page > 1
+      }
+    });
+  } catch (error) {
+    console.error("Password history error:", error);
+    return res.status(500).json({
+      status: false,
+      message: "An error occurred while fetching password history",
+    });
+  }
+};
+
+export const loginHistory = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // Validate user ID exists in request
+    if (!userId) {
+      return res.status(400).json({
+        status: false,
+        message: "User authentication required"
+      });
+    }
+
+    // Pagination parameters (default: page 1, limit 10)
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    // Get total count for pagination info
+    const total = await BetLoginDetail.countDocuments({ userid: userId });
+
+    // Fetch login history with sorting (newest first) and field selection
+    const history = await BetLoginDetail.find({ userid: userId })
+      .sort({ loginTime: -1 })  // Sort by most recent login
+      .select('-__v')           // Exclude version key
+      .skip(skip)
+      .limit(limit);
+
+    if (!history || history.length === 0) {
+      return res.status(404).json({
+        status: false,
+        message: "No login history found for this user"
+      });
+    }
+
+    return res.status(200).json({
+      status: true,
+      data: history,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        itemsPerPage: limit,
+        hasNextPage: page * limit < total,
+        hasPreviousPage: page > 1
+      }
+    });
+
+  } catch (error) {
+    console.error("Login history error:", error);
+    return res.status(500).json({
+      status: false,
+      message: "An error occurred while fetching login history",
+    });
+  }
+};

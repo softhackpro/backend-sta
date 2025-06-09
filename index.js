@@ -11,6 +11,7 @@ import errorMiddleware from './middlewares/error-middleware.js';
 import authrouter from './router/auth-router.js';
 import betplacerouter from './router/betplace-router.js';
 import bankrouter from './router/bank-router.js';
+import profitlossrouter from './router/profitloss-router.js';
 // import { strictDomainValidator } from './middlewares/domaincheck.js';
 
 const app = express();
@@ -45,6 +46,7 @@ app.use('/public/Images', express.static(path.join(__dirname, 'public/Images')))
 app.use("/api/auth", authrouter);
 app.use("/api/betplace", betplacerouter);
 app.use("/api/banking", bankrouter);
+app.use("/api/pl", profitlossrouter);
 // Error middleware
 app.use(errorMiddleware);
 
